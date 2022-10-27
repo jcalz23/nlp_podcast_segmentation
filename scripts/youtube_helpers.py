@@ -72,7 +72,6 @@ def get_transcript(vid_id): ## plugged into get_video_details
         try: # search for manual transcript first, if available
             script_type = 'manual'
             transcript = transcript_list.find_manually_created_transcript(['en-US'])
-            print("Manual available")
         except: # else, use auto-generated one
             script_type = 'auto'
             transcript = transcript_list.find_generated_transcript(['en'])
@@ -107,18 +106,18 @@ def extract_segments(desc, first_n=12): ## plugged into get_video_details
             # the timestamp will most always be within first 12 characters of line: "(00:00:00)" is 10
             first_chars = line[:first_n]
             match_hrs = re.search(r'[0-9][:][0-9][0-9][:][0-9][0-9]', first_chars) # >=1 hour
-            match_mins = re.search(r'[0-9][:][0-9][0-9]', first_chars) # <1 hour
-            if match_hrs != None:
-                span = match_hrs.span()
+            match_ten_mins = re.search(r'[0-9][0-9][:][0-9][0-9]', first_chars) # 10mins<x<1 hour
+            match_single_mins = re.search(r'[0-9][:][0-9][0-9]', first_chars) # <10 mins
+            if (match_hrs != None) | (match_ten_mins != None) | (match_single_mins != None):
+                if (match_hrs != None):
+                    span = match_hrs.span()
+                elif match_ten_mins != None: 
+                    span = match_ten_mins.span()
+                else: 
+                    span = match_single_mins.span()
                 time = line[span[0]:span[1]]
                 times = np.append(times, time)
                 times_secs = np.append(times_secs, timestamp_to_secs(time))
-                line_matches = np.append(line_matches, line) # also append full line (time + summary) to list
-            elif match_mins != None: 
-                span = match_mins.span()
-                time = line[span[0]:span[1]]
-                times = np.append(times, time) # string timestamp
-                times_secs = np.append(times_secs, timestamp_to_secs(time)) # time converted to # of seconds
                 line_matches = np.append(line_matches, line) # also append full line (time + summary) to list
             else:
                 continue
@@ -126,28 +125,10 @@ def extract_segments(desc, first_n=12): ## plugged into get_video_details
     return line_matches, times, times_secs
 
 
-# unpack words from script, map word to time
-def unpack_words(script):
-    utter_words = []
-    utter_times = []
-    all_text = ''
-
-    for line in script:
-        for word in line['text'].split(" "):
-            if (word != ""):
-                word = word.replace("'","")
-                utter_words.append(word)
-                utter_times.append(line['start'])
-                all_text = all_text + ' ' + word
-            
-    return utter_words, utter_times, all_text
-
-
-
 
 #### ---- Below functions needed for Spacy sentence splitter ---- ####
 # unpack script into string of words, and word-time mapping
-def unpack_words(script, replace_list = ["'", "_", "[", "]"]):
+def unpack_words(script, replace_list = ["'", "_", "[", "]", "\n"]):
     utter_words = []
     utter_times = []
     all_text = ''
@@ -182,27 +163,30 @@ def word_sentence_map(sentences, replace_str = [" ", "\n", "_", "[", "]"]):
         for word in sentence.text.split(" "):
             for str in replace_str:
                 word = word.replace(str, "")
-            sent_inds.append(z)
-            sent_words.append(word)
-            word_list.append(word)
-        z += 1
-        sent_word_lists.append(word_list)
+            if word != "":
+                sent_inds.append(z)
+                sent_words.append(word)
+                word_list.append(word)
+        if len(word_list)==0:
+            pass
+        else: # finish sentence word list nd append
+            z += 1
+            sent_word_lists.append(word_list)
 
     return sent_words, sent_inds, sent_word_lists
 
 ## Account for differences in word lists pre/post splitter
 # Basically check the text and if a word does't equal the neighbor, check if the next
-def map_sentence_time(utter_words, sent_words, utter_times, sent_inds, sent_word_lists, word_retention_thresh = 0.97):
+def map_sentence_time(utter_words, sent_words, utter_times, sent_inds, sent_word_lists, word_retention_thresh = 0.95):
     # check if the utter words and sent words map
     if np.all(utter_words == sent_words):
-        print("Match")
         final_words = utter_words
         final_sentence_inds = sent_inds
         final_times = utter_times
         final_sent_word_lists = sent_word_lists
 
     else:
-        rows = np.min([len(utter_words), len(sent_words)])
+        rows = np.min([len(utter_words)-5, len(sent_words)-5])
         w_t = utter_words
         w_s = sent_words
         final_words = []
@@ -214,43 +198,52 @@ def map_sentence_time(utter_words, sent_words, utter_times, sent_inds, sent_word
         w_s_i = 0 # sentence word ind
         check_n = 5 # if misaligned, check words in +=n direction to re-align
         sent_ind = -1 # trigger new sentence list at beginning
-        sent_word_list = []
+        #sent_word_list = []
 
         for i in range(rows): # loop through all words
             if sent_inds[w_s_i] != sent_ind: # check if new sentence start
                 if i != 0: # don't append if first sentence
-                    final_sent_word_lists.append(sent_word_list)
-                elif i == (rows-1): # make sure last sentence gets added before quiting
-                    final_sent_word_lists.append(sent_word_list)
-                    break
+                    if len(sent_word_list) != 0: # don't add sentence if no words matched there
+                        final_sent_word_lists.append(sent_word_list)
                 sent_word_list = [] # start new sentence list
                 sent_ind = sent_inds[w_s_i] # align indexes
 
-            # check if the two lists are equal at indices
-            if w_t[w_t_i] == w_s[w_s_i]:
-                final_words.append(w_t[w_t_i])
-                final_sentence_inds.append(sent_ind)
-                final_times.append(utter_times[w_t_i])
-                sent_word_list.append(w_t[w_t_i])
-                w_t_i += 1
-                w_s_i += 1
 
-            else:
-                # check if utter word list gets ahead, if so, look at next n sentence map words to adjust inds and re-align
-                next_w_s = w_s[w_s_i+1] # something is wrong at current index, so lets skip it and go to next word
-                check_w_t_next = w_t[w_t_i+1:w_t_i+check_n]
-                if next_w_s in check_w_t_next: # if left list gets ahead, find out by how much, adjust indices, return to top of loop and should get match
-                    add_ind = np.where(check_w_t_next == next_w_s)[0][0] # take first ind where match is found
-                    w_t_i += 1 + add_ind # skip ahead of sentence word list
+            # check if the two lists are equal at indices
+            if i != (rows-1): # if not last word
+                if w_t[w_t_i] == w_s[w_s_i]:
+                    final_words.append(w_t[w_t_i])
+                    final_sentence_inds.append(sent_ind)
+                    final_times.append(utter_times[w_t_i])
+                    sent_word_list.append(w_t[w_t_i])
+                    w_t_i += 1
                     w_s_i += 1
 
-                # check if sentence map gets ahead
-                next_w_t = w_t[w_t_i+1]
-                check_w_s_next = np.array(w_s[w_s_i+1:w_s_i+check_n])
-                if next_w_t in check_w_s_next: # if right list gets ahead, find out by how much, adjust indices, return to top of loop and should get match
-                    add_ind = np.where(check_w_s_next == next_w_t)[0][0]
-                    w_s_i += 1 + add_ind # skip ahead of sentence word list
-                    w_t_i += 1
+                else:
+                    # check if utter word list gets ahead, if so, look at next n sentence map words to adjust inds and re-align
+                    next_w_s = str(w_s[w_s_i+1]) # something is wrong at current index, so lets skip it and go to next word
+                    check_w_t_next = np.array(w_t[w_t_i+1:w_t_i+check_n], dtype=str)
+                    if next_w_s in check_w_t_next: # if left list gets ahead, find out by how much, adjust indices, return to top of loop and should get match
+                        add_ind = np.where(check_w_t_next == next_w_s)[0][0] # take first ind where match is found
+                        w_t_i += 1 + add_ind # skip ahead of sentence word list
+                        w_s_i += 1
+
+                    # check if sentence map gets ahead
+                    next_w_t = w_t[w_t_i+1]
+                    check_w_s_next = np.array(w_s[w_s_i+1:w_s_i+check_n])
+                    if next_w_t in check_w_s_next: # if right list gets ahead, find out by how much, adjust indices, return to top of loop and should get match
+                        add_ind = np.where(check_w_s_next == next_w_t)[0][0]
+                        w_s_i += 1 + add_ind # skip ahead of sentence word list
+                        w_t_i += 1
+            else: # make sure last sentence gets added before quiting
+                final_sent_word_lists.append(sent_word_list)
+                break
+
+            if (w_s_i == len(sent_inds)) | (w_t_i == len(utter_words)):
+                print("This is the issue")
+                final_sent_word_lists.append(sent_word_list)
+                break
+
 
 
     # Track how many words retained from initial script, ensure > 98%
@@ -262,8 +255,6 @@ def map_sentence_time(utter_words, sent_words, utter_times, sent_inds, sent_word
         s_t_df = pd.DataFrame({'word': final_words, 'sentence_ind': final_sentence_inds, 'time': final_times})
         f_s_t = pd.DataFrame((s_t_df.groupby(['sentence_ind'])['time'].first())).reset_index()
         f_s_t = np.array(f_s_t['time'])
-        print(f"final_sentence_inds length: {len(np.unique(final_sentence_inds))}")
-        print(f"final_sent_word_lists length: {len(final_sent_word_lists)}")
 
     return f_s_t, final_sent_word_lists
 
@@ -285,16 +276,21 @@ def get_transition_labels(script, segment_times, splitter='yt_simple', nlp = Non
 
     # for each timestamp, get the index of the closest utterance, assign transition label
     if (None in f_s_t) | (len(f_s_t) != len(f_s_w_l)):
-        if None in f_s_t: print("f_s_t issue")
-        else: print("Mismatch of sentence inds issue")
+        if None not in f_s_t: print(f"Mismatch of sentence inds issue. {len(f_s_t)} vs {len(f_s_w_l)}")
         transitions = None
     else:
         transitions = np.zeros(len(f_s_t))
+        existing_transitions = [] # can't assign same sentence to two topics if transition is quick
         for t in segment_times:
             closest_idx = (np.abs(f_s_t - t)).argmin()
-            transitions[closest_idx] = 1
+            if closest_idx in existing_transitions:
+                transitions[np.min([len(f_s_t), closest_idx+1])] = 1 # go to next index, unless it's the last one
+                existing_transitions.append(closest_idx+1)
+            else:
+                transitions[closest_idx] = 1
+                existing_transitions.append(closest_idx)
     
-    return f_s_w_l, transitions
+    return f_s_t, f_s_w_l, transitions
 
 
 def get_video_details(youtube, video_ids, splitter='yt_simple', nlp = None):
@@ -309,37 +305,42 @@ def get_video_details(youtube, video_ids, splitter='yt_simple', nlp = None):
         
         # Step 2: Loop through videos in page
         for video in tqdm(response['items']):
-            video_stats = dict(Channel = video['snippet']['channelTitle'],
-                               Title = video['snippet']['title'],
-                               Description = video['snippet']['description']
-                               )
-            # Step 3: use separate API to get transcript with words and times
-            script, script_type = get_transcript(video['id'])
-            if script == None: # no transcript available, continue to next video in page
-                continue
-            else:
-                sents = [line['text'] for line in script]
-                word_list, word_times, all_words = unpack_words(script)
-                video_stats.update({
-                    'Transcript': script,
-                    'Transcript-Source': script_type,
-                    'Word_List': word_list,
-                    'Word_Time_List': word_times,
-                    'All_Words': all_words,
-                    'Sentences': sents})
-            
-                # Step 4: Extract the timestamp/segment info from description
-                segment_all, segment_times, segment_secs = extract_segments(video['snippet']['description'])
-                if len(segment_all) == 0: # could not find a clear timestamp/segment chunk in description
-                    continue # skip this episode, continue to next
-                else: 
-                    inputs, outputs = get_transition_labels(script, segment_secs, splitter, nlp)
+            try:
+                video_stats = dict(Channel = video['snippet']['channelTitle'],
+                                Title = video['snippet']['title'],
+                                Description = video['snippet']['description']
+                                )
+                # Step 3: use separate API to get transcript with words and times
+                script, script_type = get_transcript(video['id'])
+                if script == None: # no transcript available, continue to next video in page
+                    continue
+                else:
                     video_stats.update({
-                        'Sentence_Word_Lists': inputs,
-                        'Transition_Labels': outputs,
-                        'Segment_Times': segment_times,
-                        'Segment_Times_Secs': segment_secs,
-                        'Segments_All': segment_all})
-                    all_video_stats.append(video_stats) # add to dict
+                        'Video_Id': video['id'],
+                        'Transcript': script,
+                        'Transcript-Source': script_type,
+                        #'Word_List': word_list,
+                        #'Word_Time_List': word_times,
+                        #'All_Words': all_words,
+                        #'Sentences': sents
+                        })
+                
+                    # Step 4: Extract the timestamp/segment info from description
+                    segment_all, segment_times, segment_secs = extract_segments(video['snippet']['description'])
+                    if len(segment_all) == 0: # could not find a clear timestamp/segment chunk in description
+                        continue # skip this episode, continue to next
+                    else: 
+                        s_t, inputs, outputs = get_transition_labels(script, segment_secs, splitter, nlp)
+                        video_stats.update({
+                            'Sentence_Word_Lists': inputs,
+                            'Transition_Labels': outputs,
+                            'Sentence_Times': s_t,
+                            #'Segment_Times': segment_times,
+                            'Segment_Times_Secs': segment_secs,
+                            #'Segments_All': segment_all
+                            })
+                        all_video_stats.append(video_stats) # add to dict
+            except:
+                continue
     
     return all_video_stats
