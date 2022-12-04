@@ -22,7 +22,7 @@ In the unsupervised approach we usde two sets of files to determine the predicti
 2. Predict and Measure: Create the predictions of the processed dataset with the process_embedings.ipynb notebook. This pipeline will take the embeddings generated in the previous step and calculate the predictions for each podcast and the dataset as a whole.
 
 ### Supervised approach
-How To Use Scripts:
+For the supervised approach to generate and traind the models, we need to:
 - Generate synthetic training episodes:
     - Run scripts/gen_seg_df_splitn5.ipynb to separate the topic segments of each train episode into rows
     - Run scripts/gen_synthetic_splitn5.ipynb to create new episodes from shuffling train segments and concatenating together up to max sequence length
