@@ -11,9 +11,11 @@ All models built rely on pre-trained transformer models to extract sentence embe
 
 ## File structure
 nlp_podcast_segmentation
-├── scripts                 # All model scripts
-└── README.md
 
+    .
+    ├── scripts                 # All model scripts
+    └── README.md
+    
 ### Unsupervised Approach
 In the unsupervised approach we usde two sets of files to determine the predictions and the performance metrics associated with them. The process is as follows:
 1. Create Embeddings: To create embeddings for each Dataset, process the transcriptions with the create_embeddings.ipynb noteboook which will take each podcast and pass it through a pre-trained model that will generate a tensor per podcast and will save it in the ./data/embeddings/pre-trained model name/ folder
