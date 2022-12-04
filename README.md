@@ -19,6 +19,7 @@ nlp_podcast_segmentation
     └── README.md
 
 ### Unsupervised Approach
+Taking into account that we depend heavily on storage capacity, we weren't able to retain all embeddings and datasets in this repo. We used a workfolder in Drive of aroun 200Gb in which we created all embeddings and results. Nevertheless we explain here how to create the embeddings.
 In the unsupervised approach we usde two sets of files to determine the predictions and the performance metrics associated with them. The process is as follows:
 1. Create Embeddings: To create embeddings for each Dataset, process the transcriptions with the create_embeddings.ipynb noteboook which will take each podcast and pass it through a pre-trained model that will generate a tensor per podcast and will save it in the ./data/embeddings/pre-trained model name/ folder
 2. Predict and Measure: Create the predictions of the processed dataset with the process_embedings.ipynb notebook. This pipeline will take the embeddings generated in the previous step and calculate the predictions for each podcast and the dataset as a whole.
