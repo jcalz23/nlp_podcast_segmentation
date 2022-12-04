@@ -15,8 +15,19 @@ nlp_podcast_segmentation
     .
     ├── scripts                 # All model scripts
     └── README.md
-    
+
 ### Unsupervised Approach
 In the unsupervised approach we usde two sets of files to determine the predictions and the performance metrics associated with them. The process is as follows:
 1. Create Embeddings: To create embeddings for each Dataset, process the transcriptions with the create_embeddings.ipynb noteboook which will take each podcast and pass it through a pre-trained model that will generate a tensor per podcast and will save it in the ./data/embeddings/pre-trained model name/ folder
 2. Predict and Measure: Create the predictions of the processed dataset with the process_embedings.ipynb notebook. This pipeline will take the embeddings generated in the previous step and calculate the predictions for each podcast and the dataset as a whole.
+
+### Supervised approach
+How To Use Scripts:
+- Generate synthetic training episodes:
+    - Run scripts/gen_seg_df_splitn5.ipynb to separate the topic segments of each train episode into rows
+    - Run scripts/gen_synthetic_splitn5.ipynb to create new episodes from shuffling train segments and concatenating together up to max sequence length
+- Train Supervised Models
+	- scripts/train_transformer.ipynb has the final architecture configuration
+	- scripts/train_bilstm_dl.ipynb and scripts/train_lstm_dl.ipynb contain the unsuccessful RNN model training code
+- Calibrate Threshold for Unsupervised Model:
+	- scripts/calibrate_threshold_z.ipynb determines optimal Z value for each train episode and averages to get the Z param for deriving thresholds on test set
