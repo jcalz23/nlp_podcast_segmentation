@@ -10,7 +10,7 @@ With a vast and expanding library of podcasts, topic timestamps allow users to q
 All models built rely on pre-trained transformer models to extract sentence embeddings from podcast transcripts. The unsupervised approach uses the sequence of embedded sentences and for each timestep, it calculates the semantic similarity with the previous sentence. In development of the unsupervised approach, we explored different pretrained embedding models, similarity formulas, and thresholding logic to optimally segment podcast topics. The supervised approach attempts to use a recurrent neural network to automatically derive features across the sequence and classify topic transitions.
 
 ## File structure
-.
+nlp_podcast_segmentation
 ├── scripts                 # All model scripts
 └── README.md
 
