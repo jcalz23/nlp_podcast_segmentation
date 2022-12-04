@@ -13,7 +13,9 @@ All models built rely on pre-trained transformer models to extract sentence embe
 nlp_podcast_segmentation
 
     .
-    ├── scripts                 # All model scripts
+    ├── scripts                 # All scripts folder
+    │   ├── supervised          # Scripts needed to run the supervised models
+    │   ├── unsupervised        # Scripts to create, process embeddings and calibrate threshold.
     └── README.md
 
 ### Unsupervised Approach
