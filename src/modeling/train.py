@@ -3,11 +3,13 @@ import sys
 import torch
 import torch.nn as nn
 import pytorch_lightning as pl
-from pytorch_lightning.callbacks import ModelCheckpoint
+from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modeling.dataloader import VideoDataModule
 from utils.metrics import windiff
+from modeling.architectures.BiLSTM import BiLSTMSegmentation
+from modeling.architectures.Transformer import TransformerSegmentation
 
 
 class PodcastSegmentationModel(pl.LightningModule):
@@ -18,29 +20,57 @@ class PodcastSegmentationModel(pl.LightningModule):
     and predict segment/topic transitions in podcasts.
     """
 
-    def __init__(self, input_dim, hidden_dim, num_layers, dropout=0.1, window_size=5, segment_threshold=0.5, pos_weight=10.0, learning_rate=1e-3):
+    def __init__(self, model_type, input_dim, hidden_dim, num_layers, num_heads=8, dropout=0.1, window_size=5, segment_threshold=0.5, pos_weight=10.0, learning_rate=1e-3, count_loss_weight=0.1):
         """
         Initialize the PodcastSegmentationModel.
 
         Args:
+            model_type (str): Type of model to use ('bilstm' or 'transformer').
             input_dim (int): Dimension of input features (sentence embeddings).
             hidden_dim (int): Dimension of LSTM hidden state.
             num_layers (int): Number of LSTM layers.
+            num_heads (int): Number of attention heads for Transformer model.
             dropout (float): Dropout rate for LSTM layers.
             window_size (int): Window size for WinDiff metric calculation.
             segment_threshold (float): Threshold for binarizing predictions.
             pos_weight (float): Weight for positive class in loss function.
             learning_rate (float): Learning rate for the Adam optimizer.
+            count_loss_weight (float): Weight for the count loss term in the loss function.
         """
         super().__init__()
-        self.lstm = nn.LSTM(input_dim, hidden_dim, num_layers, batch_first=True, bidirectional=True, dropout=dropout)
-        self.fc = nn.Linear(hidden_dim * 2, 1)  # *2 for bidirectional
+        self.model_type = model_type
+        if model_type == 'bilstm':
+            self.model = BiLSTMSegmentation(input_dim, hidden_dim, num_layers, dropout)
+        elif model_type == 'transformer':
+            self.model = TransformerSegmentation(input_dim, hidden_dim, num_layers, num_heads, dropout)
+        else:
+            raise ValueError(f"Unknown model type: {model_type}")
+        
         self.window_size = window_size
         self.segment_threshold = segment_threshold
         self.pos_weight = pos_weight
         self.loss_fn = nn.BCEWithLogitsLoss(pos_weight=torch.tensor([self.pos_weight]))
         self.learning_rate = learning_rate
-        self.validation_step_outputs = []  # Add this line to store outputs
+        self.validation_step_outputs = []
+        self.count_loss_weight = count_loss_weight
+
+    def _compute_loss(self, logits, targets):
+        """
+        Compute the total loss, which is a combination of the BCE loss and the count loss.
+
+        Args:
+            logits (torch.Tensor): Model predictions.
+            targets (torch.Tensor): Ground truth segment indicators.
+
+        Returns:
+            torch.Tensor: Total loss.
+        """
+        bce_loss = self.loss_fn(logits, targets)
+        pred_count = torch.sigmoid(logits).gt(self.segment_threshold).float().sum()
+        true_count = targets.sum()
+        count_loss = torch.abs(pred_count - true_count) / targets.numel()
+        total_loss = bce_loss + self.count_loss_weight * count_loss
+        return total_loss
 
     def forward(self, x):
         """
@@ -52,9 +82,7 @@ class PodcastSegmentationModel(pl.LightningModule):
         Returns:
             torch.Tensor: Output tensor of shape (batch_size, seq_length, 1).
         """
-        lstm_out, _ = self.lstm(x)
-        logits = self.fc(lstm_out)
-        return logits  # Remove sigmoid activation
+        return self.model(x)
 
     def training_step(self, batch, batch_idx):
         """
@@ -70,8 +98,11 @@ class PodcastSegmentationModel(pl.LightningModule):
         sentence_embeddings = batch['sentence_embeddings']
         segment_indicators = batch['segment_indicators'].float().unsqueeze(-1)
         logits = self(sentence_embeddings)
-        loss = self.loss_fn(logits, segment_indicators)
+        
+        loss = self._compute_loss(logits, segment_indicators)
+        
         self.log('train_loss', loss, on_step=True, on_epoch=True, prog_bar=True, logger=True)
+        
         return loss
 
     def validation_step(self, batch, batch_idx):
@@ -88,37 +119,42 @@ class PodcastSegmentationModel(pl.LightningModule):
         sentence_embeddings = batch['sentence_embeddings']
         segment_indicators = batch['segment_indicators'].float().unsqueeze(-1)
         logits = self(sentence_embeddings)
-        loss = self.loss_fn(logits, segment_indicators)
+        
+        loss = self._compute_loss(logits, segment_indicators)
         predictions = torch.sigmoid(logits)
+        
         self.log('val_loss', loss, on_step=False, on_epoch=True, prog_bar=True, logger=True)
-        # Store the outputs
-        self.validation_step_outputs.append({'val_loss': loss, 'preds': predictions, 'targets': segment_indicators})
+        
+        self.validation_step_outputs.append({
+            'val_loss': loss,
+            'preds': predictions,
+            'targets': segment_indicators
+        })
+        
         return loss
 
     def on_validation_epoch_end(self):
+        """
+        Compute and log metrics at the end of each validation epoch.
+        """
         all_preds = torch.cat([x['preds'] for x in self.validation_step_outputs]).cpu().numpy()
         all_targets = torch.cat([x['targets'] for x in self.validation_step_outputs]).cpu().numpy()
         
-        # Flatten and binarize predictions
         all_preds = (all_preds.flatten() > self.segment_threshold).astype(int)
         all_targets = all_targets.flatten().astype(int)
         
-        # Compute WinDiff
         windiff_score = windiff(all_targets, all_preds, self.window_size)
         self.log('val_windiff', windiff_score, prog_bar=True, logger=True)
         
-        # Compute average validation loss
         avg_val_loss = torch.stack([x['val_loss'] for x in self.validation_step_outputs]).mean()
         self.log('avg_val_loss', avg_val_loss)
         
-        # Print metrics
         train_loss = self.trainer.callback_metrics.get('train_loss_epoch', float('nan'))
         print(f"Epoch {self.current_epoch} - "
               f"Avg Train Loss: {train_loss:.4f}, "
               f"Avg Val Loss: {avg_val_loss:.4f}, "
               f"WinDiff: {windiff_score:.4f}")
         
-        # Clear the outputs list
         self.validation_step_outputs.clear()
 
     def configure_optimizers(self):
@@ -137,22 +173,30 @@ class PodcastSegmentationTrainer:
     This class handles the setup and execution of the training process.
     """
 
-    def __init__(self, preproc_run_name, batch_size=32, seq_length=256, stride=128, max_epochs=10, window_size=5, segment_threshold=0.5, pos_weight=10.0, learning_rate=1e-3):
+    def __init__(self, preproc_run_name, model_type='bilstm', batch_size=32, seq_length=256, stride=128, max_epochs=10, window_size=5, segment_threshold=0.5, pos_weight=10.0, learning_rate=1e-3, count_loss_weight=0.1):
         """
         Initialize the PodcastSegmentationTrainer.
 
         Args:
             preproc_run_name (str): Name of the preprocessing run.
+            model_type (str): Type of model to use ('bilstm' or 'transformer').
             batch_size (int): Batch size for training and validation.
             seq_length (int): Sequence length for input data.
             stride (int): Stride for sliding window in data preparation.
             max_epochs (int): Maximum number of training epochs.
+            window_size (int): Window size for WinDiff metric calculation.
+            segment_threshold (float): Threshold for binarizing predictions.
+            pos_weight (float): Weight for positive class in loss function.
+            learning_rate (float): Learning rate for the Adam optimizer.
+            count_loss_weight (float): Weight for the count loss term in the loss function.
         """
         self.data_module = VideoDataModule(preproc_run_name, batch_size, seq_length, stride)
         self.model = PodcastSegmentationModel(
-            input_dim=384, hidden_dim=256, num_layers=4,
+            model_type=model_type,
+            input_dim=384, hidden_dim=256, num_layers=4, num_heads=8,
             window_size=window_size, segment_threshold=segment_threshold,
-            pos_weight=pos_weight, learning_rate=learning_rate
+            pos_weight=pos_weight, learning_rate=learning_rate,
+            count_loss_weight=count_loss_weight
         )
         self.max_epochs = max_epochs
 
@@ -169,6 +213,13 @@ class PodcastSegmentationTrainer:
             filename='podcast_segmentation-{epoch:02d}-{val_loss:.2f}',
             save_top_k=3,
             monitor='val_loss',
+            mode='min'
+        )
+
+        # Set up early stopping
+        early_stop_callback = EarlyStopping(
+            monitor='val_loss',
+            patience=5,
             mode='min'
         )
 
@@ -189,7 +240,7 @@ class PodcastSegmentationTrainer:
         # Initialize the PyTorch Lightning Trainer
         trainer = pl.Trainer(
             max_epochs=self.max_epochs,
-            callbacks=[checkpoint_callback],
+            callbacks=[checkpoint_callback, early_stop_callback],
             logger=logger,
             accelerator=accelerator,
             devices=devices,
@@ -200,17 +251,23 @@ class PodcastSegmentationTrainer:
         # Start the training process
         trainer.fit(self.model, self.data_module)
 
-        # Print best model's performance
+        # Print best model's performance and checkpoint path
         print(f"Best model's performance - Val Loss: {trainer.callback_metrics['val_loss']:.4f}, "
               f"WinDiff: {trainer.callback_metrics['val_windiff']:.4f}")
+        print(f"Best model checkpoint: {checkpoint_callback.best_model_path}")
 
 if __name__ == "__main__":
-    # Example usages
     preproc_run_name = input("Enter the preprocessing run name: ")
+    model_type = input("Enter the model type (bilstm or transformer): ").lower()
+    
+    if model_type not in ['bilstm', 'transformer']:
+        raise ValueError("Invalid model type. Please choose 'bilstm' or 'transformer'.")
+    
     trainer = PodcastSegmentationTrainer(
         preproc_run_name=preproc_run_name,
+        model_type=model_type,
         batch_size=64, seq_length=256, stride=128, max_epochs=100,
         window_size=5, segment_threshold=0.5, pos_weight=20.0,
-        learning_rate=1e-3
+        learning_rate=1e-3, count_loss_weight=0.2
     )
     trainer.train()

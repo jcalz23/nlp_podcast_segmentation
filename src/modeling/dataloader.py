@@ -3,6 +3,7 @@ from torch.utils.data import Dataset, DataLoader
 import pytorch_lightning as pl
 import sys
 import os
+import logging
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from utils.aws import read_json
 from constants import S3_BUCKET_NAME, S3_DATA_DIR, SPLITS_FILENAME
@@ -13,6 +14,7 @@ class VideoDataset(Dataset):
         self.seq_length = seq_length
         self.stride = stride
         self.data = self._load_all_data()
+        logging.info(f"Finished loading {len(self.data)} segments from {len(video_ids)} videos")
 
     def _load_all_data(self):
         all_data = []
