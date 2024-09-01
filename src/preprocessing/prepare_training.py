@@ -5,8 +5,9 @@ from typing import Dict, List, Tuple
 import sys
 import os
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from utils.youtube import process_channels
+from utils.youtube import process_playlists
 from constants import *
+from utils.aws import save_json_to_s3
 
 # Setup logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -23,9 +24,11 @@ def generate_train_val_split(video_metadata: Dict[str, Dict], val_ratio: float =
     Returns:
         Tuple[List[str], List[str]]: Lists of video IDs for training and validation sets.
     """
+    # Get video IDs
     video_ids = list(video_metadata.keys())
     random.shuffle(video_ids)
     
+    # Split into train and validation sets
     split_index = int(len(video_ids) * (1 - val_ratio))
     train_ids = video_ids[:split_index]
     val_ids = video_ids[split_index:]
@@ -38,7 +41,8 @@ def main():
         channels = json.load(f)
 
     # Process channels
-    video_metadata = process_channels(channels, mode='train', n=N_SENTENCES)
+    run_name = input("Enter run name: ")
+    video_metadata = process_playlists(channels, mode='train', n=N_SENTENCES, run_name=run_name)
     logger.info(f"Processed {len(video_metadata)} videos.")
 
     # Generate train-val split
@@ -51,10 +55,10 @@ def main():
         "train": train_ids,
         "validation": val_ids
     }
-    with open(SPLITS_FILENAME, 'w') as f:
-        json.dump(splits, f, indent=2)
+    s3_file_key = f"{S3_DATA_DIR}/{str(run_name)}/{SPLITS_FILENAME}"
+    save_json_to_s3(splits, S3_BUCKET_NAME, s3_file_key)
     
-    logger.info("Train-validation splits saved to data_splits.json")
+    logger.info("Train-validation splits saved to S3")
 
 if __name__ == "__main__":
     main()

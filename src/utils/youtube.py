@@ -20,9 +20,10 @@ from sentence_transformers import SentenceTransformer
 # Custom imports
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from constants import *
+from utils.aws import save_json_to_s3
 
 # Setup logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 
 # Download the punkt tokenizer for sentence splitting (only needed once)
 nltk.download('punkt')
@@ -388,6 +389,7 @@ def get_podcast_id_from_url(url: str) -> str:
 
     raise ValueError("Unable to extract podcast ID from the provided URL.")
 
+
 def process_channels(channels: Dict[str, str], mode: str = 'train', n: int = 4) -> Dict[str, Dict]:
     """
     Process all channels, retrieve podcast IDs and details, and save them to individual JSON files.
@@ -404,49 +406,92 @@ def process_channels(channels: Dict[str, str], mode: str = 'train', n: int = 4) 
 
     # Iterate through channels, playlists, and podcasts to get details
     result = {}
-    for channel_name, channel_id in tqdm(channels.items(), total=len(channels)):
-        logging.info(f"Processing channel: {channel_name}")
+    for channel_name, channel_id in tqdm(channels.items(), desc="Processing channels", unit="channel"):
         try:
             # Get playlist IDs for the channel
             playlist_ids = get_playlist_ids(youtube_client, channel_id)
-            for playlist_id in playlist_ids:
-                # Get podcast IDs for the playlist
+            for playlist_id in tqdm(playlist_ids, desc=f"Playlists for {channel_name}", leave=False):
                 podcast_ids = get_podcast_ids(youtube_client, playlist_id)
-                for podcast_id in podcast_ids:
+                for podcast_id in tqdm(podcast_ids, desc=f"Podcasts in playlist {playlist_id}", leave=False):
                     try:
                         # Get podcast details
                         podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n)
 
-                        # Save podcast details to a JSON file
+                        # Save podcast details to AWS S3
                         if podcast_details:
-                            # Create directory if it doesn't exist
-                            os.makedirs('podcasts', exist_ok=True)
-                            
-                            # Save podcast details to a JSON file
-                            filepath = f"podcasts/{podcast_id}.json"
-                            with open(filepath, 'w') as f:
-                                json.dump(podcast_details, f, indent=2)
+                            # Save podcast details to S3
+                            s3_file_key = f"{S3_DATA_DIR}/podcasts/{podcast_id}.json"
+                            save_json_to_s3(podcast_details, S3_BUCKET_NAME, s3_file_key)
                             
                             # Add to result dictionary
                             result[podcast_id] = {
                                 'channel_name': channel_name,
                                 'channel_id': channel_id,
                                 'playlist_id': playlist_id,
-                                'details_filepath': filepath
+                                'details_filepath': s3_file_key
                             }
-                            logging.info(f"Processed podcast: {podcast_id}")
                         else:
-                            logging.warning(f"Skipped podcast (no details): {podcast_id}")
+                            logging.info(f"Skipped podcast (no details): {podcast_id}")
                     except Exception as e:
                         logging.error(f"Error processing podcast {podcast_id}: {str(e)}")
-                break
         except Exception as e:
             logging.error(f"Error processing channel {channel_name}: {str(e)}")
-            break
         break
     
     # Save the result to a JSON file
-    with open(PODCAST_METADATA_FILENAME, 'w') as f:
-        json.dump(result, f, indent=2)
+    s3_file_key = f"{S3_DATA_DIR}/{PODCAST_METADATA_FILENAME}"
+    save_json_to_s3(result, S3_BUCKET_NAME, s3_file_key)
+
+    return result
+
+
+def process_playlists(playlists: Dict[str, str], mode: str = 'train', n: int = 4, run_name: str = None) -> Dict[str, Dict]:
+    """
+    Process all playlists, retrieve podcast IDs and details, and save them to individual JSON files.
+
+    Args:
+        playlists (Dict[str, str]): A dictionary with channel names as keys and playlists IDs as values.
+        mode (str): 'train' or 'inference'. Default is 'train'.
+        n (int): Number of sentences to combine into a single sentence. Default is 4.
+    Returns:
+        Dict[str, Dict]: A dictionary with podcast IDs as keys and channel ID, playlist ID, and details filepath as values.
+    """
+    # Create YouTube client
+    youtube_client = create_youtube_client()
+
+    # Iterate through channels, playlists, and podcasts to get details
+    result = {}
+    # Get playlist IDs for the channel
+    i = 0
+    for channel_name, playlist_id in tqdm(playlists.items(), desc="Processing playlists"):
+        podcast_ids = get_podcast_ids(youtube_client, playlist_id)
+        for podcast_id in tqdm(podcast_ids, desc=f"Podcasts in playlist {playlist_id}", leave=False):
+            try:
+                # Get podcast details
+                podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n)
+
+                # Save podcast details to AWS S3
+                if podcast_details:
+                    # Save podcast details to S3
+                    s3_file_key = f"{S3_DATA_DIR}/podcasts/{podcast_id}.json"
+                    save_json_to_s3(podcast_details, S3_BUCKET_NAME, s3_file_key)
+                    
+                    # Add to result dictionary
+                    result[podcast_id] = {
+                        'channel_name': channel_name,
+                        'playlist_id': playlist_id,
+                        'details_filepath': s3_file_key
+                    }
+                else:
+                    logging.info(f"Skipped podcast (no details): {podcast_id}")
+            except Exception as e:
+                logging.error(f"Error processing podcast {podcast_id}: {str(e)}")
+            i += 1
+            if i > 10:
+                break
+    
+    # Save the result to a JSON file
+    s3_file_key = f"{S3_DATA_DIR}/{str(run_name)}/{PODCAST_METADATA_FILENAME}"
+    save_json_to_s3(result, S3_BUCKET_NAME, s3_file_key)
 
     return result

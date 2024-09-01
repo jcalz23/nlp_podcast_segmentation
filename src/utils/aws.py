@@ -22,6 +22,10 @@ def save_json_to_s3(json_content: dict, bucket_name: str, file_key: str):
     json_data = json.dumps(json_content).encode('utf-8')
     s3_client.upload_fileobj(io.BytesIO(json_data), bucket_name, file_key)
 
+async def save_json_to_s3_async(json_content: dict, bucket_name: str, file_key: str):
+    json_data = json.dumps(json_content).encode('utf-8')
+    s3_client.upload_fileobj(io.BytesIO(json_data), bucket_name, file_key)
+
 def save_local_to_s3(local_file_path: str, bucket_name: str, file_key: str):
     with open(local_file_path, 'rb') as file_data:
         s3_client.upload_fileobj(file_data, bucket_name, file_key)

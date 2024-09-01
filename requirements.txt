@@ -1,0 +1,15 @@
+ipykernel
+youtube_transcript_api
+google-api-python-client
+tqdm
+numpy
+pandas
+spacy
+nltk
+boto3
+sentence_transformers
+pytorch_lightning
+torch
+tensorboard
+tensorboardX
+aiohttp

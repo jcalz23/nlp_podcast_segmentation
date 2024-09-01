@@ -15,7 +15,7 @@ nlp = spacy.load("en_core_web_lg")
 path = '/Users/jetcalz07/Desktop/MIDS/W266_NLP/nlp_podcast_segmentation/'
 load_scripts = False
 
-api_key = 'AIzaSyDTr6GYriQpML3rwVB_M4aVhixseOxVO4U'
+api_key = input("Enter your API key: ")
 channel_ids = ['UCSHZKyawb77ixDdsGog4iWA', # Lex Fridman
                'UCESLZhusAkFfsNsApnjF_Cg', # All-In
                'UCNNTZgxNQuBrhbO0VrG8woA', # No Jumper
