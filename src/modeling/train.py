@@ -1,7 +1,9 @@
 import os
+import json
 import sys
 import torch
 import torch.nn as nn
+import argparse
 import pytorch_lightning as pl
 from pytorch_lightning.callbacks import ModelCheckpoint, EarlyStopping
 from pytorch_lightning.loggers import TensorBoardLogger
@@ -10,6 +12,8 @@ from modeling.dataloader import VideoDataModule
 from utils.metrics import windiff
 from modeling.architectures.BiLSTM import BiLSTMSegmentation
 from modeling.architectures.Transformer import TransformerSegmentation
+from constants import *
+from utils.aws import save_json_to_s3, save_local_to_s3
 
 
 class PodcastSegmentationModel(pl.LightningModule):
@@ -173,32 +177,35 @@ class PodcastSegmentationTrainer:
     This class handles the setup and execution of the training process.
     """
 
-    def __init__(self, preproc_run_name, model_type='bilstm', batch_size=32, seq_length=256, stride=128, max_epochs=10, window_size=5, segment_threshold=0.5, pos_weight=10.0, learning_rate=1e-3, count_loss_weight=0.1):
+    def __init__(self, config=None):
         """
         Initialize the PodcastSegmentationTrainer.
 
         Args:
             preproc_run_name (str): Name of the preprocessing run.
-            model_type (str): Type of model to use ('bilstm' or 'transformer').
-            batch_size (int): Batch size for training and validation.
-            seq_length (int): Sequence length for input data.
-            stride (int): Stride for sliding window in data preparation.
-            max_epochs (int): Maximum number of training epochs.
-            window_size (int): Window size for WinDiff metric calculation.
-            segment_threshold (float): Threshold for binarizing predictions.
-            pos_weight (float): Weight for positive class in loss function.
-            learning_rate (float): Learning rate for the Adam optimizer.
-            count_loss_weight (float): Weight for the count loss term in the loss function.
+            config (dict, optional): Configuration dictionary. If None, DEFAULT_CONFIG is used.
         """
-        self.data_module = VideoDataModule(preproc_run_name, batch_size, seq_length, stride)
-        self.model = PodcastSegmentationModel(
-            model_type=model_type,
-            input_dim=384, hidden_dim=256, num_layers=4, num_heads=8,
-            window_size=window_size, segment_threshold=segment_threshold,
-            pos_weight=pos_weight, learning_rate=learning_rate,
-            count_loss_weight=count_loss_weight
+        self.config = config or DEFAULT_CONFIG
+        self.data_module = VideoDataModule(
+            self.config['train_data_folder'],
+            self.config['batch_size'],
+            self.config['seq_length'],
+            self.config['stride']
         )
-        self.max_epochs = max_epochs
+        self.model = PodcastSegmentationModel(
+            model_type=self.config['model_type'],
+            input_dim=self.config['input_dim'],
+            hidden_dim=self.config['hidden_dim'],
+            num_layers=self.config['num_layers'],
+            num_heads=self.config['num_heads'],
+            dropout=self.config['dropout'],
+            window_size=self.config['window_size'],
+            segment_threshold=self.config['segment_threshold'],
+            pos_weight=self.config['pos_weight'],
+            learning_rate=self.config['learning_rate'],
+            count_loss_weight=self.config['count_loss_weight']
+        )
+        self.max_epochs = self.config['max_epochs']
 
     def train(self):
         """
@@ -237,10 +244,29 @@ class PodcastSegmentationTrainer:
             accelerator = "cpu"
             devices = None
 
+        # Initialize variables to track best metrics
+        best_val_loss = float('inf')
+        best_windiff = float('inf')
+        best_epoch = -1
+
+        # Custom callback to track best metrics
+        class BestMetricsCallback(pl.Callback):
+            def on_validation_end(self, trainer, pl_module):
+                nonlocal best_val_loss, best_windiff, best_epoch
+                current_val_loss = trainer.callback_metrics['val_loss'].item()
+                current_windiff = trainer.callback_metrics['val_windiff'].item()
+                if current_val_loss < best_val_loss:
+                    best_val_loss = current_val_loss
+                    best_windiff = current_windiff
+                    best_epoch = trainer.current_epoch
+
+        # Add the custom callback to the list of callbacks
+        callbacks = [checkpoint_callback, early_stop_callback, BestMetricsCallback()]
+
         # Initialize the PyTorch Lightning Trainer
         trainer = pl.Trainer(
             max_epochs=self.max_epochs,
-            callbacks=[checkpoint_callback, early_stop_callback],
+            callbacks=callbacks,
             logger=logger,
             accelerator=accelerator,
             devices=devices,
@@ -252,22 +278,45 @@ class PodcastSegmentationTrainer:
         trainer.fit(self.model, self.data_module)
 
         # Print best model's performance and checkpoint path
-        print(f"Best model's performance - Val Loss: {trainer.callback_metrics['val_loss']:.4f}, "
-              f"WinDiff: {trainer.callback_metrics['val_windiff']:.4f}")
+        print(f"Best model's performance - Val Loss: {best_val_loss:.4f}, "
+              f"WinDiff: {best_windiff:.4f}, Epoch: {best_epoch}")
         print(f"Best model checkpoint: {checkpoint_callback.best_model_path}")
 
+        # Save the config and checkpoint to S3
+        config_name = os.path.splitext(os.path.basename(args.config_path))[0]
+        s3_config_key = f"{S3_MODELS_DIR}/{config_name}/config.json"
+        save_json_to_s3(config, S3_BUCKET_NAME, s3_config_key)
+        print(f"Config saved to S3: {s3_config_key}")
+
+        # Save best model checkpoint and metrics to S3
+        if checkpoint_callback.best_model_path:
+            # Save checkpoint
+            s3_checkpoint_key = f"{S3_MODELS_DIR}/{config_name}/best_model.ckpt"
+            save_local_to_s3(checkpoint_callback.best_model_path, S3_BUCKET_NAME, s3_checkpoint_key)
+            print(f"Best model checkpoint saved to S3: {s3_checkpoint_key}")
+
+            # Save metrics
+            metrics = {
+                'val_loss': best_val_loss,
+                'val_windiff': best_windiff,
+                'epoch': best_epoch
+            }
+            s3_metrics_key = f"{S3_MODELS_DIR}/{config_name}/best_model_metrics.json"
+            save_json_to_s3(metrics, S3_BUCKET_NAME, s3_metrics_key)
+            print(f"Best model metrics saved to S3: {s3_metrics_key}")
+        else:
+            print("No best model checkpoint found to save.")
+
 if __name__ == "__main__":
-    preproc_run_name = input("Enter the preprocessing run name: ")
-    model_type = input("Enter the model type (bilstm or transformer): ").lower()
-    
-    if model_type not in ['bilstm', 'transformer']:
-        raise ValueError("Invalid model type. Please choose 'bilstm' or 'transformer'.")
-    
-    trainer = PodcastSegmentationTrainer(
-        preproc_run_name=preproc_run_name,
-        model_type=model_type,
-        batch_size=64, seq_length=256, stride=128, max_epochs=100,
-        window_size=5, segment_threshold=0.5, pos_weight=20.0,
-        learning_rate=1e-3, count_loss_weight=0.2
-    )
+    # Set up argument parser
+    parser = argparse.ArgumentParser(description='Train the Podcast Segmentation Model')
+    parser.add_argument('--config_path', type=str, help='Path to the configuration JSON file')
+    args = parser.parse_args()
+
+    # Load the config file
+    with open(args.config_path, 'r') as f:
+        config = json.load(f)
+
+    # Train
+    trainer = PodcastSegmentationTrainer(config=config)
     trainer.train()

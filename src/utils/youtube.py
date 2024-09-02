@@ -338,12 +338,8 @@ def get_podcast_details(youtube_client: build, podcast_id: str, mode: str = 'tra
         return None
 
     # Get segments and target segment transition indicators for training
-    if mode == 'train':
-        segments = extract_segments(podcast_data['snippet']['description'])
-        segment_indicators = create_segment_indicators(sentences, sentence_start_times, segments)
-    else:
-        segments = None
-        segment_indicators = None
+    segments = extract_segments(podcast_data['snippet']['description'])
+    segment_indicators = create_segment_indicators(sentences, sentence_start_times, segments)
 
     # Need to ensure segments available for training
     result = {

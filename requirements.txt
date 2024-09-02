@@ -13,3 +13,4 @@ torch
 tensorboard
 tensorboardX
 aiohttp
+matplotlib
