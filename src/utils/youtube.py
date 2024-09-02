@@ -12,7 +12,7 @@ from typing import Dict, List, Optional, Tuple
 
 # Third-party imports
 import nltk
-from nltk.tokenize import word_tokenize, sent_tokenize
+from nltk.tokenize import sent_tokenize, word_tokenize
 from youtube_transcript_api import YouTubeTranscriptApi
 from googleapiclient.discovery import build
 from sentence_transformers import SentenceTransformer
@@ -146,69 +146,54 @@ def get_transcript(podcast_id: str) -> Tuple[Optional[List[Dict]], str]:
         print(f"Error fetching transcript for podcast {podcast_id}: {str(e)}")
         return None, 'unavailable'
 
-def prepare_transcript(transcript: List[Dict], n: int = 4) -> Tuple[List[str], List[float]]:
+def prepare_transcript(transcript: List[Dict], n_chunks: int = 20) -> List[Dict]:
     """
-    Prepare the transcript by mapping words to times, splitting into sentences using NLTK,
-    and assigning the time of the first word to each sentence. Validates the alignment with podcast duration.
+    Prepare the transcript by combining every n consecutive phrases into a single sentence,
+    cleaning the sentences, and validating the timing.
 
     Args:
         transcript (List[Dict]): The raw transcript from YouTube.
-        n (int): Number of sentences to combine into a single sentence. Default is 4.
+        n_chunks (int): Number of phrases to combine into a single sentence. Default is 20.
     Returns:
-        Tuple[List[str], List[float]]: A tuple containing a list of cleaned sentences and
-        a list of corresponding start times in seconds.
+        List[Dict]: A list of dictionaries, each containing a cleaned, combined sentence and its start time.
 
     Raises:
-        ValueError: If the last word's time is not within 30 seconds of the podcast end.
+        ValueError: If the last sentence's start time is not within 30 seconds of the last phrase's start time.
     """
-    # Step 1: Map each word to its time
-    word_time_map = []
-    for item in transcript:
-        words = word_tokenize(item['text'])
-        for word in words:
-            word_time_map.append((word, item['start']))
-
-    # Step 2: Combine all words into a single text
-    full_text = " ".join(word for word, _ in word_time_map)
-
-    # Step 3: Use NLTK to split the text into sentences
-    sentences = sent_tokenize(full_text)
-
-    cleaned_sentences = []
+    sentence_texts = []
     sentence_start_times = []
-
-    word_index = 0
-    for i in range(0, len(sentences), n):
-        # Combine N sentences to reduce sequence length
-        combined_sentence = " ".join(sentences[i:i+n])
-        # Clean up the sentence
-        cleaned_sentence = combined_sentence.strip()
-        cleaned_sentence = re.sub(r'\s+', ' ', cleaned_sentence)
+    for i in range(0, len(transcript), n_chunks):
+        # Get the next n phrases (or fewer if we're at the end)
+        phrase_group = transcript[i:i+n_chunks]
         
-        # Find the start time of the first word in this sentence
-        sentence_words = word_tokenize(cleaned_sentence)
-        while word_index < len(word_time_map) and word_time_map[word_index][0] != sentence_words[0]:
-            word_index += 1
+        # Combine the text of all phrases in the group
+        combined_text = " ".join(item['text'] for item in phrase_group)
         
-        if word_index < len(word_time_map):
-            sentence_start_times.append(word_time_map[word_index][1])
-        else:
-            # If we can't find the start time, use the last known time
-            sentence_start_times.append(word_time_map[-1][1])
-
-        cleaned_sentences.append(cleaned_sentence)
+        # Clean up the combined text
+        combined_text = combined_text.strip()
+        combined_text = re.sub(r'\s+', ' ', combined_text)
+        combined_text = re.sub(r'[^\w\s.,!?-]', '', combined_text)
         
-        # Move the word_index to the end of the current sentence
-        word_index += len(sentence_words)
-
-    # Validate alignment with podcast duration
-    last_word_time = word_time_map[-1][1]
+        # Use sentence_tokenize to split into sentences, then rejoin
+        sentences = sent_tokenize(combined_text)
+        cleaned_sentences = [s.capitalize() for s in sentences]
+        final_text = " ".join(cleaned_sentences)
+        
+        # Use the start time of the first phrase in the group
+        start_time = phrase_group[0]['start']
+        
+        # Add the combined sentence and start time to the result
+        sentence_texts.append(final_text)
+        sentence_start_times.append(start_time)
+    
+    # Validation step
+    last_phrase_time = transcript[-1]['start']
     last_sentence_time = sentence_start_times[-1]
-
-    if last_sentence_time - last_word_time > 30:
-        raise ValueError(f"Last word time ({last_word_time:.2f}s) is more than 30 seconds before the podcast end ({duration_seconds:.2f}s)")
-
-    return cleaned_sentences, sentence_start_times
+    
+    if last_phrase_time - last_sentence_time > 30:
+        raise ValueError(f"Last sentence start time ({last_sentence_time:.2f}s) is more than 30 seconds before the last phrase time ({last_phrase_time:.2f}s)")
+    
+    return sentence_texts, sentence_start_times
 
 def create_segment_indicators(sentences: List[str], sentence_start_times: List[float], segments: List[Dict]) -> List[int]:
     """
@@ -299,7 +284,7 @@ def embed_sentences(sentences: List[str], model_name: str = 'all-MiniLM-L6-v2') 
     embeddings = model.encode(sentences, show_progress_bar=True)
     return embeddings.tolist()
 
-def get_podcast_details(youtube_client: build, podcast_id: str, mode: str = 'train', n: int = 4) -> Dict:
+def get_podcast_details(youtube_client: build, podcast_id: str, mode: str = 'train', n_chunks: int = 20) -> Dict:
     """
     Fetch podcast details from YouTube API and get the transcript.
 
@@ -307,7 +292,7 @@ def get_podcast_details(youtube_client: build, podcast_id: str, mode: str = 'tra
         youtube_client (googleapiclient.discovery.Resource): YouTube API client.
         podcast_id (str): YouTube podcast ID.
         mode (str): 'train' or 'inference'. Default is 'train'.
-        n (int): Number of sentences to combine into a single sentence. Default is 4.
+        n_chunks (int): Number of sentences to combine into a single sentence. Default is 20.
     Returns:
         Dict: Dictionary containing podcast details and transcript information.
     """
@@ -331,7 +316,7 @@ def get_podcast_details(youtube_client: build, podcast_id: str, mode: str = 'tra
     # Get transcript and prepare sentences with start times
     transcript_raw, script_type = get_transcript(podcast_id)
     try:
-        sentences, sentence_start_times = prepare_transcript(transcript_raw, n)
+        sentences, sentence_start_times = prepare_transcript(transcript_raw, n_chunks)
         sentence_embeddings = embed_sentences(sentences)
     except ValueError as e:
         logging.error(f"Error in transcript preparation for podcast {podcast_id}: {str(e)}")
@@ -386,14 +371,14 @@ def get_podcast_id_from_url(url: str) -> str:
     raise ValueError("Unable to extract podcast ID from the provided URL.")
 
 
-def process_channels(channels: Dict[str, str], mode: str = 'train', n: int = 4) -> Dict[str, Dict]:
+def process_channels(channels: Dict[str, str], mode: str = 'train', n_chunks: int = 4) -> Dict[str, Dict]:
     """
     Process all channels, retrieve podcast IDs and details, and save them to individual JSON files.
 
     Args:
         channels (Dict[str, str]): A dictionary with channel names as keys and channel IDs as values.
         mode (str): 'train' or 'inference'. Default is 'train'.
-        n (int): Number of sentences to combine into a single sentence. Default is 4.
+        n (int): Number of sentences to combine into a single sentence. Default is 20.
     Returns:
         Dict[str, Dict]: A dictionary with podcast IDs as keys and channel ID, playlist ID, and details filepath as values.
     """
@@ -411,7 +396,7 @@ def process_channels(channels: Dict[str, str], mode: str = 'train', n: int = 4) 
                 for podcast_id in tqdm(podcast_ids, desc=f"Podcasts in playlist {playlist_id}", leave=False):
                     try:
                         # Get podcast details
-                        podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n)
+                        podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n_chunks)
 
                         # Save podcast details to AWS S3
                         if podcast_details:
@@ -441,14 +426,14 @@ def process_channels(channels: Dict[str, str], mode: str = 'train', n: int = 4) 
     return result
 
 
-def process_playlists(playlists: Dict[str, str], mode: str = 'train', n: int = 4, run_name: str = None) -> Dict[str, Dict]:
+def process_playlists(playlists: Dict[str, str], mode: str = 'train', n_chunks: int = 4, run_name: str = None) -> Dict[str, Dict]:
     """
     Process all playlists, retrieve podcast IDs and details, and save them to individual JSON files.
 
     Args:
         playlists (Dict[str, str]): A dictionary with channel names as keys and playlists IDs as values.
         mode (str): 'train' or 'inference'. Default is 'train'.
-        n (int): Number of sentences to combine into a single sentence. Default is 4.
+        n (int): Number of sentences to combine into a single sentence. Default is 20.
     Returns:
         Dict[str, Dict]: A dictionary with podcast IDs as keys and channel ID, playlist ID, and details filepath as values.
     """
@@ -458,13 +443,12 @@ def process_playlists(playlists: Dict[str, str], mode: str = 'train', n: int = 4
     # Iterate through channels, playlists, and podcasts to get details
     result = {}
     # Get playlist IDs for the channel
-    i = 0
     for channel_name, playlist_id in tqdm(playlists.items(), desc="Processing playlists"):
         podcast_ids = get_podcast_ids(youtube_client, playlist_id)
-        for podcast_id in tqdm(podcast_ids, desc=f"Podcasts in playlist {playlist_id}", leave=False):
+        for podcast_id in tqdm(podcast_ids, desc=f"Podcasts in playlist {playlist_id}", leave=False, total=len(podcast_ids)):
             try:
                 # Get podcast details
-                podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n)
+                podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n_chunks)
 
                 # Save podcast details to AWS S3
                 if podcast_details:
@@ -482,9 +466,6 @@ def process_playlists(playlists: Dict[str, str], mode: str = 'train', n: int = 4
                     logging.info(f"Skipped podcast (no details): {podcast_id}")
             except Exception as e:
                 logging.error(f"Error processing podcast {podcast_id}: {str(e)}")
-            i += 1
-            if i > 10:
-                break
     
     # Save the result to a JSON file
     s3_file_key = f"{S3_DATA_DIR}/{str(run_name)}/{PODCAST_METADATA_FILENAME}"

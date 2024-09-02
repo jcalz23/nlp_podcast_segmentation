@@ -122,6 +122,7 @@ class PodcastSegmentationModel(pl.LightningModule):
         """
         sentence_embeddings = batch['sentence_embeddings']
         segment_indicators = batch['segment_indicators'].float().unsqueeze(-1)
+        attention_mask = batch['attention_mask'].float().unsqueeze(-1)
         logits = self(sentence_embeddings)
         
         loss = self._compute_loss(logits, segment_indicators)
@@ -132,7 +133,8 @@ class PodcastSegmentationModel(pl.LightningModule):
         self.validation_step_outputs.append({
             'val_loss': loss,
             'preds': predictions,
-            'targets': segment_indicators
+            'targets': segment_indicators,
+            'attention_mask': attention_mask
         })
         
         return loss
@@ -143,11 +145,12 @@ class PodcastSegmentationModel(pl.LightningModule):
         """
         all_preds = torch.cat([x['preds'] for x in self.validation_step_outputs]).cpu().numpy()
         all_targets = torch.cat([x['targets'] for x in self.validation_step_outputs]).cpu().numpy()
-        
         all_preds = (all_preds.flatten() > self.segment_threshold).astype(int)
         all_targets = all_targets.flatten().astype(int)
-        
-        windiff_score = windiff(all_targets, all_preds, self.window_size)
+        all_attention_mask = torch.cat([x['attention_mask'] for x in self.validation_step_outputs]).cpu().numpy()
+        all_attention_mask = all_attention_mask.flatten().astype(int)
+
+        windiff_score = windiff(all_targets, all_preds, self.window_size, all_attention_mask)
         self.log('val_windiff', windiff_score, prog_bar=True, logger=True)
         
         avg_val_loss = torch.stack([x['val_loss'] for x in self.validation_step_outputs]).mean()
@@ -185,7 +188,7 @@ class PodcastSegmentationTrainer:
             preproc_run_name (str): Name of the preprocessing run.
             config (dict, optional): Configuration dictionary. If None, DEFAULT_CONFIG is used.
         """
-        self.config = config or DEFAULT_CONFIG
+        self.config = config
         self.data_module = VideoDataModule(
             self.config['train_data_folder'],
             self.config['batch_size'],
@@ -206,6 +209,7 @@ class PodcastSegmentationTrainer:
             count_loss_weight=self.config['count_loss_weight']
         )
         self.max_epochs = self.config['max_epochs']
+        self.patience = self.config.get('patience', 5)  # Default to 5 if not specified
 
     def train(self):
         """
@@ -226,7 +230,7 @@ class PodcastSegmentationTrainer:
         # Set up early stopping
         early_stop_callback = EarlyStopping(
             monitor='val_loss',
-            patience=5,
+            patience=self.patience,
             mode='min'
         )
 

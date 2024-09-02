@@ -42,7 +42,7 @@ def main():
 
     # Process channels
     run_name = input("Enter run name: ")
-    video_metadata = process_playlists(channels, mode='train', n=N_SENTENCES, run_name=run_name)
+    video_metadata = process_playlists(channels, mode='train', n_chunks=N_CHUNKS, run_name=run_name)
     logger.info(f"Processed {len(video_metadata)} videos.")
 
     # Generate train-val split

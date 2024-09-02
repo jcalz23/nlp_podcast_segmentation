@@ -8,7 +8,7 @@ S3_DATA_DIR = "data"
 S3_MODELS_DIR = "models"
 
 # Podcast preprocessing params
-N_SENTENCES = 4
+N_CHUNKS = 4
 PREPROCESSING_THREADS = 2
 
 # Train data params

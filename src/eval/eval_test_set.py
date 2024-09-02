@@ -85,6 +85,7 @@ def evaluate_model(model, data_module, device):
         for batch in val_dataloader:
             sentence_embeddings = batch['sentence_embeddings'].to(device)
             segment_indicators = batch['segment_indicators'].cpu().numpy()
+            attention_masks = batch['attention_mask'].cpu().numpy()
             video_ids = batch['video_id']
 
             # Get model predictions
@@ -95,11 +96,11 @@ def evaluate_model(model, data_module, device):
             for i, video_id in enumerate(video_ids):
                 pred = predictions[i].flatten()
                 true = segment_indicators[i].flatten()
-                
+                attention_mask = attention_masks[i].flatten()
                 pred_binary = (pred > model.segment_threshold).astype(int)
                 true_binary = true.astype(int)
                 
-                windiff_score = windiff(true_binary, pred_binary, model.window_size)
+                windiff_score = windiff(true_binary, pred_binary, model.window_size, attention_mask)
                 
                 results_by_video[video_id] = {
                     "predictions": pred_binary.tolist(),

@@ -9,6 +9,7 @@ from modeling.train import PodcastSegmentationModel
 from utils.youtube import create_youtube_client, get_podcast_details, get_podcast_id_from_url
 from utils.aws import read_json, download_file_from_s3, save_json_to_s3
 from constants import *
+from utils.metrics import windiff
 
 def get_device():
     if torch.cuda.is_available():
@@ -38,11 +39,36 @@ def load_model(checkpoint_path, device, model_type, input_dim, hidden_dim, num_l
     return model
 
 def run_inference(model, sentence_embeddings, device):
+    seq_length = model.seq_length if hasattr(model, 'seq_length') else 256
+
     with torch.no_grad():
         sentence_embeddings = torch.tensor(sentence_embeddings).float().to(device)
-        logits = model(sentence_embeddings.unsqueeze(0))
-        predictions = torch.sigmoid(logits).cpu().numpy()
-    return predictions[0].flatten()
+        
+        if len(sentence_embeddings) <= seq_length:
+            # If embeddings fit within sequence length, process normally
+            logits = model(sentence_embeddings.unsqueeze(0))
+            predictions = torch.sigmoid(logits).cpu().numpy()[0]
+        else:
+            # Apply chunking for longer sequences
+            chunks = []
+            for i in range(0, len(sentence_embeddings) - seq_length + 1, seq_length):
+                chunk = sentence_embeddings[i:i+seq_length]
+                logits = model(chunk.unsqueeze(0))
+                chunks.append(torch.sigmoid(logits).cpu().numpy()[0])
+            
+            # Combine chunks with sliding inference window
+            predictions = np.zeros(len(sentence_embeddings))
+            for i, chunk in enumerate(chunks):
+                start = i * seq_length
+                end = start + seq_length
+                if i > 0:
+                    chunk[0] = 0
+                predictions[start:end] = chunk.flatten()
+
+            # Trim to original length
+            predictions = predictions[:len(sentence_embeddings)]
+
+    return predictions.flatten()
 
 def main():
     # Set up device (CUDA, MPS, or CPU)
@@ -93,7 +119,7 @@ def main():
 
     # Create YouTube client and get podcast details
     youtube_client = create_youtube_client()
-    podcast_details = get_podcast_details(youtube_client, video_id, mode='inference', n=4) #config['num_sentences'])
+    podcast_details = get_podcast_details(youtube_client, video_id, mode='inference', n_chunks=config['n_chunks'])
     if podcast_details is None:
         print(f"Error: Unable to retrieve details for video {video_id}")
         sys.exit(1)
@@ -104,6 +130,9 @@ def main():
     # Create binary predictions
     binary_predictions = (predictions > model.segment_threshold).astype(int)
 
+    # Calculate metrics
+    windiff_val = windiff(podcast_details['segment_indicators'], binary_predictions, config['window_size'])
+
     # Prepare results
     results = {
         'video_id': video_id,
@@ -111,7 +140,6 @@ def main():
         'sentences': podcast_details['sentences'],
         'sentence_start_times': podcast_details['sentence_start_times'],
         'segments': podcast_details['segments'],
-        'segment_start_times': podcast_details['segment_start_times'],
         'ground_truths': podcast_details['segment_indicators'],
         'predictions': binary_predictions.tolist(),
         'raw_predictions': predictions.tolist()
@@ -133,6 +161,7 @@ def main():
     print(f"Title: {podcast_details['title']}")
     print(f"Number of sentences: {len(podcast_details['sentences'])}")
     print(f"Number of predicted segments: {sum(binary_predictions)}")
+    print(f"WindowDiff: {windiff_val}")
     print(f"Results saved to: s3://{S3_BUCKET_NAME}/{s3_file_key}")
 
 if __name__ == "__main__":

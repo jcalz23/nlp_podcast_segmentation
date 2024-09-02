@@ -37,16 +37,21 @@ class VideoDataset(Dataset):
                         segment_inds[start:],
                         torch.zeros(padding_length)
                     ])
+                    attention_mask = torch.cat([
+                        torch.ones(self.seq_length - padding_length),
+                        torch.zeros(padding_length)
+                    ])
                 else:
                     segment = sentence_embedding[start:end]
                     segment_ind = segment_inds[start:end]
-
+                    attention_mask = torch.ones(self.seq_length)
                 # Force the first sentence to be a segment start
                 segment_ind[0] = 1
                 
                 all_data.append({
                     "sentence_embeddings": segment,
                     "segment_indicators": segment_ind,
+                    "attention_mask": attention_mask,
                     "video_id": video_id
                 })
         return all_data
