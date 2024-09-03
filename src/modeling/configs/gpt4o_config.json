@@ -1,0 +1,7 @@
+{
+    "model_type": "llm",
+    "model_name": "gpt-4o",
+    "model_kwargs": {"temperature": 0.1},
+    "train_data_folder": "lex_10",
+    "seq_length": 1000000
+}

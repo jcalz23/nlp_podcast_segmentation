@@ -1,0 +1,20 @@
+{
+    "model_type": "transformer",
+    "train_data_folder": "lex_10",
+    "n_chunks": 4,
+    "input_dim": 384,
+    "hidden_dim": 256,
+    "num_layers": 4,
+    "num_heads": 8,
+    "dropout": 0.1,
+    "patience": 10,
+    "batch_size": 8,
+    "seq_length": 256,
+    "stride": 256,
+    "max_epochs": 4,
+    "window_size": 5,
+    "segment_threshold": 0.5,
+    "pos_weight": 20.0,
+    "learning_rate": 1e-3,
+    "count_loss_weight": 0.2
+}
