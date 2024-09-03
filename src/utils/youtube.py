@@ -5,7 +5,6 @@ This module contains functions to interact with the YouTube API.
 import sys
 import os
 import re
-import json
 import logging
 from tqdm import tqdm
 from typing import Dict, List, Optional, Tuple

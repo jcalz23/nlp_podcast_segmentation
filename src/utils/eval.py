@@ -1,5 +1,6 @@
 import os
 import sys
+import numpy as np
 import matplotlib.pyplot as plt
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from modeling.train import PodcastSegmentationModel
@@ -77,22 +78,26 @@ def load_model_from_config(config, config_name, device):
 
     return model
 
-def plot_predictions_vs_ground_truths(predictions, ground_truths, video_id):
-    """Plot predictions vs ground truths."""
-    fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(15, 10))
+def plot_predictions_vs_ground_truths(pred_dict, ground_truths, video_id):
+    """Plot predictions vs ground truths for multiple models."""
+    num_models = len(pred_dict)
+    fig, axes = plt.subplots(num_models + 1, 1, figsize=(8, 4 * (num_models + 1)))
 
-    # Plot predictions
-    ax1.plot(predictions, color='blue')
-    ax1.set_title(f'Predictions: {video_id}')
-    ax1.set_ylabel('Activation')
-    ax1.set_ylim(0, 1)
+    # Plot ground truths first
+    axes[0].plot(ground_truths, color='red')
+    axes[0].set_title(f'Ground Truths: {video_id}')
+    axes[0].set_ylabel('Activation')
+    axes[0].set_ylim(0, 1)
 
-    # Plot ground truths
-    ax2.plot(ground_truths, color='red')
-    ax2.set_title(f'Ground Truths: {video_id}')
-    ax2.set_xlabel('Sentence Index')
-    ax2.set_ylabel('Activation')
-    ax2.set_ylim(0, 1)
+    # Plot predictions for each model
+    for i, (model_name, vals) in enumerate(pred_dict.items(), start=1):
+        predictions = vals["predictions"]
+        axes[i].plot(predictions, color='blue')
+        axes[i].set_title(f'Predictions ({model_name}): {video_id}')
+        axes[i].set_ylabel('Activation')
+        axes[i].set_ylim(0, 1)
+
+    axes[-1].set_xlabel('Sentence Index')
 
     plt.tight_layout()
     plt.show()
@@ -106,3 +111,21 @@ def plot_prediction_distribution(predictions):
     plt.xlabel('Prediction Value')
     plt.ylabel('Frequency')
     plt.show()
+
+def plot_mean_windiff(model_names, mean_windiff_values, ax):
+    ax.bar(model_names, mean_windiff_values)
+    ax.set_title('Mean WinDiff Values by Model')
+    ax.set_xlabel('Model')
+    ax.set_ylabel('Mean WinDiff')
+    ax.set_ylim(0, max(mean_windiff_values) * 1.1)
+    for i, v in enumerate(mean_windiff_values):
+        ax.text(i, v, f'{v:.4f}', ha='center', va='bottom')
+
+def plot_mean_topic_diff(model_names, mean_topic_diff_values, ax):
+    ax.bar(model_names, mean_topic_diff_values)
+    ax.set_title('Mean Topic Diff Values by Model')
+    ax.set_xlabel('Model')
+    ax.set_ylabel('Mean Topic Diff')
+    ax.set_ylim(min(mean_topic_diff_values) * 1.1, max(mean_topic_diff_values) * 1.1)
+    for i, v in enumerate(mean_topic_diff_values):
+        ax.text(i, v, f'{v:.2f}', ha='center', va='bottom')

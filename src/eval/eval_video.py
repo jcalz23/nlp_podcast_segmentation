@@ -74,7 +74,7 @@ def main(video_url, config_name):
 
     # Create YouTube client and get podcast details
     youtube_client = create_youtube_client()
-    podcast_details = get_podcast_details(youtube_client, video_id, mode='inference', n_chunks=config['n_chunks'])
+    podcast_details, _ = get_podcast_details(youtube_client, video_id, mode='inference', n_chunks=8)#config['n_chunks'])
     if podcast_details is None:
         print(f"Error: Unable to retrieve details for video {video_id}")
         sys.exit(1)
@@ -100,7 +100,7 @@ def main(video_url, config_name):
         'segments': podcast_details['segments'],
         'ground_truths': actual_transitions,
         'predictions': binary_predictions,
-        'raw_predictions': raw_predictions
+        'raw_predictions': raw_predictions.tolist() if isinstance(raw_predictions, np.ndarray) else raw_predictions
     }
 
     # Save results to S3
@@ -118,6 +118,6 @@ def main(video_url, config_name):
 
 if __name__ == "__main__":
     # Get input from user
-    video_url = input("Enter the YouTube video URL: ")
+    video_url = "https://www.youtube.com/watch?v=tdv7r2JSokI" #input("Enter the YouTube video URL: ")
     config_name = input("Enter the config name: ")
     main(video_url, config_name)

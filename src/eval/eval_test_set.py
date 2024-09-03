@@ -80,12 +80,14 @@ def evaluate_test_set(model, data_module, device, model_type = 'custom', llm_kwa
 
                     # Calculate metrics
                     windiff_score = windiff(true_binary, pred_binary, WINDOW_SIZE)
+                    topic_diff = sum(true_binary) - sum(pred_binary)
 
                     # Add to results
                     results_by_video[video_id] = {
                         "predictions": pred_binary,
                         "ground_truths": true_binary,
                         "windiff_score": windiff_score,
+                        "topic_diff": topic_diff,
                         "topic_dict": topic_dict
                     }
 
@@ -94,10 +96,11 @@ def evaluate_test_set(model, data_module, device, model_type = 'custom', llm_kwa
                     all_ground_truths.extend(true_binary)
 
     # Compute overall WinDiff score
-    overall_windiff = windiff(np.array(all_ground_truths), np.array(all_predictions), WINDOW_SIZE)
+    overall_windiff = np.mean([result["windiff_score"] for result in results_by_video.values()])
+    overall_topic_diff = np.mean([result["topic_diff"] for result in results_by_video.values()])
 
     # Add overall score to results
-    results_by_video["overall"] = {"windiff_score": overall_windiff}
+    results_by_video["overall"] = {"mean_windiff": overall_windiff, "mean_topic_diff": overall_topic_diff}
 
     return overall_windiff, results_by_video
 
@@ -146,7 +149,7 @@ def main(config_name):
     print("Lower WinDiff scores indicate better performance.")
 
     # Save results to S3
-    s3_file_key = f"{S3_MODELS_DIR}/{config_name}/eval/{preproc_run_name}_results.json"
+    s3_file_key = f"{S3_MODELS_DIR}/{config_name}/val_results.json"
     
     try:
         save_json_to_s3(results_by_video, S3_BUCKET_NAME, s3_file_key)
