@@ -24,7 +24,8 @@ class PodcastSegmentationModel(pl.LightningModule):
     and predict segment/topic transitions in podcasts.
     """
 
-    def __init__(self, model_type, input_dim, hidden_dim, num_layers, num_heads=8, dropout=0.1, window_size=5, segment_threshold=0.5, pos_weight=10.0, learning_rate=1e-3, count_loss_weight=0.1):
+    def __init__(self, model_type, input_dim, hidden_dim, num_layers, num_heads=8, dropout=0.1,
+                 window_size=5, segment_threshold=0.5, pos_weight=10.0, learning_rate=1e-3, count_loss_weight=0.1):
         """
         Initialize the PodcastSegmentationModel.
 

@@ -1,0 +1,8 @@
+{
+    "model_type": "llm",
+    "model_name": "gpt-4o",
+    "model_kwargs": {"temperature": 0.1},
+    "train_data_folder": "lex_fridman_n8",
+    "n_chunks": 8,
+    "seq_length": 1000000
+}

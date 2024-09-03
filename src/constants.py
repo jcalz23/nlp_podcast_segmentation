@@ -14,6 +14,9 @@ PREPROCESSING_THREADS = 2
 # Train data params
 SPLIT_HOLD_OUT_RATIO = 0.2
 
+# Eval params
+WINDOW_SIZE = 5
+
 # Filenames
 PODCAST_METADATA_FILENAME = "video_metadata.json"
 CHANNELS_FILENAME = "channels.json"

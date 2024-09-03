@@ -338,9 +338,12 @@ def get_podcast_details(youtube_client: build, podcast_id: str, mode: str = 'tra
         'transcript_type': script_type,
     }
     if mode == 'train' and not segments:
-        return None
+        return None, None
     else:
-        return result
+        # Save podcast details to S3
+        s3_file_key = f"{S3_DATA_DIR}/podcasts/{podcast_id}.json"
+        save_json_to_s3(result, S3_BUCKET_NAME, s3_file_key)
+        return result, s3_file_key
 
 def get_podcast_id_from_url(url: str) -> str:
     """
@@ -396,14 +399,10 @@ def process_channels(channels: Dict[str, str], mode: str = 'train', n_chunks: in
                 for podcast_id in tqdm(podcast_ids, desc=f"Podcasts in playlist {playlist_id}", leave=False):
                     try:
                         # Get podcast details
-                        podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n_chunks)
+                        podcast_details, s3_file_key = get_podcast_details(youtube_client, podcast_id, mode, n_chunks)
 
                         # Save podcast details to AWS S3
-                        if podcast_details:
-                            # Save podcast details to S3
-                            s3_file_key = f"{S3_DATA_DIR}/podcasts/{podcast_id}.json"
-                            save_json_to_s3(podcast_details, S3_BUCKET_NAME, s3_file_key)
-                            
+                        if podcast_details:                            
                             # Add to result dictionary
                             result[podcast_id] = {
                                 'channel_name': channel_name,
@@ -448,15 +447,10 @@ def process_playlists(playlists: Dict[str, str], mode: str = 'train', n_chunks: 
         for podcast_id in tqdm(podcast_ids, desc=f"Podcasts in playlist {playlist_id}", leave=False, total=len(podcast_ids)):
             try:
                 # Get podcast details
-                podcast_details = get_podcast_details(youtube_client, podcast_id, mode, n_chunks)
+                podcast_details, s3_file_key = get_podcast_details(youtube_client, podcast_id, mode, n_chunks)
 
-                # Save podcast details to AWS S3
+                # Save podcast details
                 if podcast_details:
-                    # Save podcast details to S3
-                    s3_file_key = f"{S3_DATA_DIR}/podcasts/{podcast_id}.json"
-                    save_json_to_s3(podcast_details, S3_BUCKET_NAME, s3_file_key)
-                    
-                    # Add to result dictionary
                     result[podcast_id] = {
                         'channel_name': channel_name,
                         'playlist_id': playlist_id,
@@ -467,7 +461,7 @@ def process_playlists(playlists: Dict[str, str], mode: str = 'train', n_chunks: 
             except Exception as e:
                 logging.error(f"Error processing podcast {podcast_id}: {str(e)}")
     
-    # Save the result to a JSON file
+    # Save the aggregate results to a JSON file
     s3_file_key = f"{S3_DATA_DIR}/{str(run_name)}/{PODCAST_METADATA_FILENAME}"
     save_json_to_s3(result, S3_BUCKET_NAME, s3_file_key)
 
