@@ -1,5 +1,7 @@
 # nlp_podcast_segmentation
 
+Note: This project has been rebuilt since initial submission in order to improve the pipeline and add an LLM-based segmentation approach. The original MIDS submission can be found in the MIDS_submission branch.
+
 ### Abstract
 This project aims to use natural language processing to divide podcast episodes into topic segments with timestamps. We primarily reference two previous works: one unsupervised topic segmentation approach on a corpus of meeting transcripts, and one supervised approach on a corpus of Wikipedia articles. This paper discusses the implementation of both unsupervised and supervised topic segmentation methods on a corpus of podcast transcripts from Youtube videos. All model variants are evaluated using the WindowDiff and Pk error metrics. Ultimately, the supervised learning method using transformer encoders produced the best results and in many cases, produced practically useful podcast topic segments.
 
